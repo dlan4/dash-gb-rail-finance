@@ -5,31 +5,48 @@ datacols = c("Total income", "Total expenditure")
 idcol = "date"
 filters = exprs(operator == "Caledonian Sleeper")
 
-t1 <- \(value) value / `Passenger km`
-t2 <- \(value) value * 100 / 90
-t3 <- compose(t1, t2, .dir = "forward")
+t1 <- expr(.x / `Passenger km`)
+t2 <- expr(.x * 100 / 90)
+
+# this creates a closure which goes l-r to evaluate
+combine_transformations <- function(...) {
+  transformations <<- list(...) # list of functions
+  function(value) {
+    purrr::reduce(transformations,
+                  \(acc, fn)  fn(acc),
+                  .init = value )
+  }
+}
+
+t3 <- combine_transformations(t1, t2)
 testenv <- new.env(parent = globalenv())
 testenv$value <- 20
-testenv$`Passenger km` <- 100
-# doesn't work, because t3 is defined in the global env and not testenv
-# but it's fine, because tidyverse would specifically enclose the function in
-# the data mask
-do.call(t3, list(value = 20), envir = testenv)
-eval(expr(`Passenger km` + value), envir= testenv)
-not_null <- compose(`!`, is.null)
-not_null(4)
+testenv$data <- c(`Passenger km` = 25)
 
-create_data <- function(data, datacols, idcols, filters, transformations) {
+
+t1(value = 20, data = testenv$data)
+eval(expr(`Passenger km` + value), envir= testenv)
+
+create_data <- function(data, datacols, idcols, filters, transformations = NULL) {
   datacols_s <- syms(datacols)
   idcols_s <- syms(idcols)
+  if (!is.null(transformations)) {
+    c_transform <- combine_transformations(transformations)
+  }
   data %>%
     filter(!!!filters) %>%
-    mutate(across(any_of(datacols), transformations)) %>%
+    mutate(across(any_of(datacols), ~c_transform(.) )) %>%
     select(!!!idcols_s, any_of(datacols) ) %>%
     pivot_longer(cols = all_of(datacols), names_to = ".id", values_to = ".value")
 }
 
-type = "table"
+data = finance_data_cleaned
+datacols = c("Fare income")
+filters = exprs(lubridate::year(date) == 2025)
+idcols = "operator"
+transformations = list(\(value) value / `Passenger km`,
+                       \(value) value * 100 / 90
+                       )
 data = create_data(finance_data_cleaned, datacols, idcol, filters)
 # mapping for table
 mapping = list(
